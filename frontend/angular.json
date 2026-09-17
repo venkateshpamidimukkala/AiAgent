@@ -1,0 +1,40 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "projects": {
+    "assistant": {
+      "projectType": "application",
+      "root": "",
+      "sourceRoot": "src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/assistant",
+            "index": "src/index.html",
+            "browser": "src/main.ts",
+            "polyfills": [
+              "zone.js"
+            ],
+            "tsConfig": "tsconfig.app.json",
+            "assets": [],
+            "styles": [
+              "src/styles.css"
+            ]
+          }
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "options": {
+            "buildTarget": "assistant:build"
+          }
+        }
+      }
+    }
+  },
+  "defaultProject": "assistant",
+  "cli": {
+    "analytics": "d928b2f8-d755-48be-9321-9133342c0b8f"
+  }
+}

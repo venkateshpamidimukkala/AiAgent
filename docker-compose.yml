@@ -1,0 +1,39 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: admin
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+  backend:
+    build: ./backend
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://assistant:admin@db:5432/assistant
+      FRONTEND_ORIGIN: http://localhost:4200
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_STT_MODEL: ${OPENAI_STT_MODEL:-whisper-1}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:8000/api/auth/microsoft/callback}
+      MICROSOFT_SCOPES: ${MICROSOFT_SCOPES:-User.Read offline_access Mail.ReadWrite Mail.Send Calendars.Read Chat.Read ChannelMessage.Read.All Team.ReadBasic.All}
+      CONFLUENCE_BASE_URL: ${CONFLUENCE_BASE_URL:-}
+      CONFLUENCE_EMAIL: ${CONFLUENCE_EMAIL:-}
+      CONFLUENCE_API_TOKEN: ${CONFLUENCE_API_TOKEN:-}
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+    ports: ["8000:8000"]
+    depends_on: [db]
+  frontend:
+    build: ./frontend
+    ports: ["4200:80"]
+    depends_on: [backend]
+volumes:
+  pgdata:
