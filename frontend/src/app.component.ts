@@ -8,11 +8,12 @@ interface Draft { id:number; message_id:number; draft_text:string; status:string
 interface MicrosoftStatus { configured:boolean; connected:boolean; account_email:string|null; unread_emails:number; upcoming_meetings:number; }
 interface ConfluenceStatus { configured:boolean; connected:boolean; base_url:string; email:string; account_email?:string|null; }
 interface ConfluencePage { title:string; space:string; updated:string|null; url:string; content:string; }
-interface ConfluenceAnswer { answer:string; source:{title:string;url:string}; }
+interface ConfluenceAnswer { answer:string; summary:string; key_points:string[]; problems:string[]; implementation:string[]; source:{title:string;url:string}; }
 interface JiraStatus { configured:boolean; connected:boolean; base_url:string; email:string; account_email?:string|null; }
 interface ConnectionStatus { database:{connected:boolean; type:string; name:string; schemas:string[]; tables:string[]; error:string|null}; providers:{microsoft:MicrosoftStatus; jira:JiraStatus; confluence:ConfluenceStatus}; }
 interface ProviderStatusCard { key:'microsoft'|'jira'|'confluence'; label:string; status:MicrosoftStatus|JiraStatus|ConfluenceStatus; }
 interface JiraIssue { key:string; summary:string; status:string; priority:string; assignee:string; updated:string|null; url:string; }
+interface JiraDailyIssue extends JiraIssue { comment:string; }
 interface AssistantAnswer { id:number; query:string; answer:string; request_type:string; status:string; created_at:string; }
 interface AssistantRequestRecord { id:number; request_text:string; request_type:string; response_text:string|null; status:string; created_at:string; }
 
@@ -22,9 +23,10 @@ export class AppComponent implements OnInit, OnDestroy {
   messages: Message[]=[]; selected?: Message; draft?: Draft;
   instruction='Reply as Venkat: I received your message and will review it and follow up today.'; revision=''; listening=false; status='';
   microsoftConnected=false; microsoftConfigured=false; microsoftEmail=''; microsoftUnread=0; microsoftMeetings=0; voiceEnabled=false; syncing=false;
-  confluenceConnected=false; confluenceConfigured=false; confluenceUrl=''; confluenceEmail=''; confluenceToken=''; confluenceLink=''; confluenceQuestion=''; confluencePage?:ConfluencePage; confluenceAnswer?:ConfluenceAnswer; confluenceLoading=false;
+  confluenceConnected=false; confluenceConfigured=false; confluenceUrl=''; confluenceEmail=''; confluenceToken=''; confluenceLink=''; confluenceSourceLink=''; confluenceQuestion=''; confluenceFocus='everything'; confluencePage?:ConfluencePage; confluenceAnswer?:ConfluenceAnswer; confluenceLoading=false;
   jiraConnected=false; jiraConfigured=false; jiraUrl=''; jiraEmail=''; jiraToken=''; jiraQuery=''; jiraIssues:JiraIssue[]=[]; jiraLoading=false;
   inboxSource='all'; jiraCommentIssue?:JiraIssue; jiraComment='';
+  jiraDailyIssues:JiraDailyIssue[]=[]; showJiraDailyPopup=false; jiraDailyLoading=false; jiraDailySubmitting=false;
   voiceStyle='natural'; preferredLanguage='en-US'; inputLanguage='en-US'; outputVoiceName=''; voiceSpeed=1; speaking=false; availableVoices:SpeechSynthesisVoice[]=[];
   loggedIn=false; setupComplete=false; showRegistration=false; navOpen=false; sidebarCollapsed=false; profileMenuOpen=false; accountView=''; profileName=''; profileEmail=''; profilePassword=''; newPassword=''; confirmNewPassword=''; loginEmail=''; loginName=''; registerName=''; registerEmail=''; registerPassword=''; registerConfirmPassword=''; selectedApps:string[]=[]; setupStep=1;
   currentTime=''; private clockTimer?: ReturnType<typeof setInterval>;
@@ -154,7 +156,7 @@ export class AppComponent implements OnInit, OnDestroy {
   playSpeech(text:string){speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(text);utterance.lang=this.preferredLanguage;const voices=this.availableVoices.length?this.availableVoices:speechSynthesis.getVoices();const languageCode=this.preferredLanguage.split('-')[0];const languageVoice=voices.filter(v=>v.lang.toLowerCase().startsWith(languageCode));const selected=voices.find(v=>v.name===this.outputVoiceName);const female=languageVoice.find(v=>/female|samantha|zira|karen|victoria|google.*female/i.test(v.name));const male=languageVoice.find(v=>/male|david|alex|daniel|google.*male/i.test(v.name));utterance.voice=selected||(this.voiceStyle==='female'&&female)||(this.voiceStyle==='male'&&male)||languageVoice[0]||voices[0]||null;utterance.rate=this.voiceStyle==='siri'?1.01:0.94;utterance.pitch=this.voiceStyle==='female'?1.08:this.voiceStyle==='male'?0.88:1;utterance.onend=()=>this.speaking=false;utterance.onerror=()=>this.speaking=false;speechSynthesis.speak(utterance);}
   stopSpeaking(){if('speechSynthesis' in window){speechSynthesis.cancel();this.speaking=false;}}
   confluenceStatus(){this.http.get<ConfluenceStatus>('/api/confluence/status').subscribe({next:v=>{this.confluenceConfigured=v.configured;this.confluenceConnected=v.connected;this.confluenceUrl=v.base_url;this.confluenceEmail=v.email;this.providerStatusCards[3]={key:'confluence',label:'Confluence',status:v};},error:()=>this.status='Unable to read Confluence connection status'});}
-  jiraStatus(){this.http.get<JiraStatus>('/api/jira/status').subscribe({next:v=>{this.jiraConfigured=v.configured;this.jiraConnected=v.connected;this.jiraUrl=v.base_url;this.jiraEmail=v.email;this.providerStatusCards[2]={key:'jira',label:'Jira',status:v};},error:()=>this.status='Unable to read Jira connection status'});}
+  jiraStatus(){this.http.get<JiraStatus>('/api/jira/status').subscribe({next:v=>{this.jiraConfigured=v.configured;this.jiraConnected=v.connected;this.jiraUrl=v.base_url;this.jiraEmail=v.email;this.providerStatusCards[2]={key:'jira',label:'Jira',status:v};this.loadJiraDailyComments(true);},error:()=>this.status='Unable to read Jira connection status'});}
   loadConnectionStatus(){this.connectionsLoading=true;this.http.get<ConnectionStatus>('/api/connections/status').subscribe({next:v=>{this.connectionStatus=v;this.setProviderStatusCards(v.providers);this.connectionsLoading=false;},error:()=>{this.connectionsLoading=false;this.status='Unable to read combined connection status. Showing individual provider statuses.';this.jiraStatus();this.confluenceStatus();}});}
   setProviderStatusCards(providers:ConnectionStatus['providers']){this.providerStatusCards=[{key:'microsoft',label:'Outlook',status:providers.microsoft},{key:'microsoft',label:'Teams',status:providers.microsoft},{key:'jira',label:'Jira',status:providers.jira},{key:'confluence',label:'Confluence',status:providers.confluence}];this.microsoftConfigured=providers.microsoft.configured;this.microsoftConnected=providers.microsoft.connected;this.microsoftEmail=providers.microsoft.account_email||'';this.jiraConfigured=providers.jira.configured;this.jiraConnected=providers.jira.connected;this.jiraUrl=providers.jira.base_url;this.jiraEmail=providers.jira.email;this.confluenceConfigured=providers.confluence.configured;this.confluenceConnected=providers.confluence.connected;this.confluenceUrl=providers.confluence.base_url;this.confluenceEmail=providers.confluence.email;}
   openConnections(){this.activeNav='connections';this.loadConnectionStatus();}
@@ -165,6 +167,9 @@ export class AppComponent implements OnInit, OnDestroy {
     if(this.voiceEnabled)this.speakAssistant(`Venkat, I am not seeing your comment on ${issue.key}. I prepared a comment. Do you want me to add it?`);
   }
   addJiraComment(){if(!this.jiraCommentIssue||!this.jiraComment.trim())return;this.http.post<{status:string}>('/api/jira/comment',{issue_key:this.jiraCommentIssue.key,body:this.jiraComment.trim()}).subscribe({next:()=>{this.status=`Comment added to ${this.jiraCommentIssue?.key}`;this.jiraCommentIssue=undefined;this.jiraComment='';},error:e=>this.status=e.error?.detail||'Unable to add Jira comment'});}
+  loadJiraDailyComments(showIfNeeded=false){if(!this.jiraConnected)return;this.jiraDailyLoading=true;this.http.get<JiraIssue[]>('/api/jira/daily-comments').subscribe({next:issues=>{this.jiraDailyIssues=issues.map(issue=>({...issue,comment:''}));this.jiraDailyLoading=false;const today=new Date().toISOString().slice(0,10);if(showIfNeeded&&this.jiraDailyIssues.length&&localStorage.getItem('orbit-jira-daily-popup')!==today)this.showJiraDailyPopup=true;},error:()=>this.jiraDailyLoading=false});}
+  dismissJiraDailyPopup(){this.showJiraDailyPopup=false;localStorage.setItem('orbit-jira-daily-popup',new Date().toISOString().slice(0,10));}
+  submitJiraDailyComment(issue:JiraDailyIssue){if(!issue.comment.trim())return;this.jiraDailySubmitting=true;this.http.post<{status:string}>('/api/jira/comment',{issue_key:issue.key,body:issue.comment.trim()}).subscribe({next:()=>{this.jiraDailyIssues=this.jiraDailyIssues.filter(item=>item.key!==issue.key);issue.comment='';this.jiraDailySubmitting=false;this.status=`Comment added to ${issue.key}`;if(!this.jiraDailyIssues.length)this.dismissJiraDailyPopup();},error:e=>{this.jiraDailySubmitting=false;this.status=e.error?.detail||`Unable to add comment to ${issue.key}`;}});}
   connectConfluence(){
     this.confluenceUrl=this.confluenceUrl.trim().replace(/\/$/,'');
     this.confluenceEmail=this.confluenceEmail.trim();
@@ -176,14 +181,14 @@ export class AppComponent implements OnInit, OnDestroy {
   loadConfluence(){
     if(!this.confluenceLink.trim())return;
     if(!/\/pages\/\d+|pageId=\d+|^\d+$/.test(this.confluenceLink.trim())){this.confluenceQuestion=this.confluenceLink;this.askConfluence(this.confluenceLink);return;}
-    this.confluenceLoading=true;this.confluenceAnswer=undefined;this.http.post<ConfluencePage>('/api/confluence/page',{url:this.confluenceLink}).subscribe({next:v=>{this.confluencePage=v;this.confluenceLoading=false;this.status='Confluence page loaded. Ask a question about it.';},error:e=>{this.confluenceLoading=false;this.status=e.error?.detail||'Unable to load Confluence page';}});
+    this.confluenceSourceLink=this.confluenceLink.trim();this.confluenceLink='Give me a summary';this.confluenceQuestion=this.confluenceLink;this.askConfluence(this.confluenceLink);
   }
   askConfluence(question=this.confluenceQuestion){
     if(!this.confluenceLink.trim()&&this.confluencePage?.url)this.confluenceLink=this.confluencePage.url;
     if(!question.trim()){this.status='Enter a question for Confluence.';return;}
     this.confluenceQuestion=question;this.confluenceLoading=true;this.confluenceAnswer=undefined;
-    const pageUrl=/\/pages\/\d+|pageId=\d+|^\d+$/.test(this.confluenceLink.trim())?this.confluenceLink.trim():'';
-    this.http.post<ConfluenceAnswer>('/api/confluence/ask',{url:pageUrl,question}).subscribe({next:v=>{this.confluenceAnswer=v;this.confluenceLoading=false;this.status='Answer generated from Confluence';if(this.voiceEnabled)this.speakAssistant(v.answer);},error:e=>{this.confluenceLoading=false;this.status=e.error?.detail||'Unable to answer from Confluence';}});
+    const pageUrl=this.confluenceSourceLink.trim();
+    this.http.post<ConfluenceAnswer>('/api/confluence/ask',{url:pageUrl,question,focus:this.confluenceFocus}).subscribe({next:v=>{this.confluenceAnswer=v;this.confluenceLoading=false;this.status='Answer generated from Confluence';if(this.voiceEnabled)this.speakAssistant(v.answer);},error:e=>{this.confluenceLoading=false;this.status=e.error?.detail||'Unable to answer from Confluence';}});
   }
   setVoiceStyle(style:string){this.voiceStyle=style;localStorage.setItem('voice-style',style);}
   setPreferredLanguage(language:string){this.preferredLanguage=language;localStorage.setItem('voice-language',language);}

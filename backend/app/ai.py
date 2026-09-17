@@ -1,3 +1,4 @@
+import json
 import re
 
 from .config import settings
@@ -20,26 +21,43 @@ def revise(text: str, instruction: str) -> str:
     return text + f"\n\n[Revision requested: {instruction}]"
 
 
-def answer_confluence(question: str, page: dict[str, str]) -> str:
+def answer_confluence(question: str, page: dict[str, str], focus: str = "everything") -> dict[str, str | list[str]]:
     content = page.get("content", "")
     if settings.openai_api_key:
         from openai import OpenAI
-        prompt = ("Answer only from the Confluence page below. If the answer is not present, say so clearly. "
-                  "For summaries, use concise bullet points.\n\n"
+        prompt = ("Answer only from the Confluence content below. Do not invent facts. "
+                  "Return valid JSON with exactly these keys: answer (string), summary (string), "
+                  "key_points (array of strings), problems (array of strings), implementation (array of strings). "
+                  "The user wants this focus: " + focus + ". If a section is not covered, return an empty array or say that it is not specified.\n\n"
                   f"Page title: {page.get('title')}\nQuestion: {question}\nPage content:\n{content[:30000]}")
-        return OpenAI(api_key=settings.openai_api_key).chat.completions.create(
+        result = OpenAI(api_key=settings.openai_api_key).chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "user", "content": prompt}],
-        ).choices[0].message.content or "I could not find an answer on this page."
+        ).choices[0].message.content or ""
+        try:
+            value = json.loads(result)
+            return {"answer": value.get("answer", ""), "summary": value.get("summary", ""),
+                    "key_points": value.get("key_points", []), "problems": value.get("problems", []),
+                    "implementation": value.get("implementation", [])}
+        except (json.JSONDecodeError, TypeError):
+            return {"answer": result or "I could not find an answer on this page.", "summary": result,
+                    "key_points": [], "problems": [], "implementation": []}
     paragraphs = [item.strip() for item in content.split("\n\n") if item.strip()]
     if not paragraphs:
-        return "This Confluence page does not contain readable text."
-    if any(word in question.lower() for word in ("summar", "main point", "key point", "overview")):
-        return "\n".join(f"• {item[:240]}" for item in paragraphs[:5])
+        empty = "This Confluence page does not contain readable text."
+        return {"answer": empty, "summary": empty, "key_points": [], "problems": [], "implementation": []}
+    summary = " ".join(paragraphs[:2])[:600]
+    key_points = [item[:240] for item in paragraphs[:5]]
+    problem_terms = ("problem", "risk", "block", "issue", "challenge", " limitation", "error")
+    implementation_terms = ("implement", "step", "configure", "install", "deploy", "use", "setup")
+    problems = [item[:240] for item in paragraphs if any(term in item.lower() for term in problem_terms)][:5]
+    implementation = [item[:240] for item in paragraphs if any(term in item.lower() for term in implementation_terms)][:5]
     terms = [term.lower() for term in re.findall(r"[a-zA-Z]{4,}", question)]
     matches = [item for item in paragraphs if any(term in item.lower() for term in terms)]
-    return ("\n\n".join(matches[:3]) if matches else
-            "I could not find that information on this Confluence page. Try asking for a summary or use terms from the page.")
+    answer = "\n\n".join(matches[:3]) if matches else summary
+    return {"answer": answer, "summary": summary, "key_points": key_points,
+            "problems": problems or ["No specific problems or risks were mentioned on this page."],
+            "implementation": implementation or ["The page does not specify implementation steps for this request."]}
 
 
 def translate_for_voice(text: str, language: str) -> str:

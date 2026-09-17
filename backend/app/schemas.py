@@ -48,6 +48,7 @@ class ConfluencePageRequest(BaseModel):
 
 class ConfluenceAskRequest(ConfluencePageRequest):
     question: str = Field(min_length=1, max_length=2000)
+    focus: str = Field(default="everything", max_length=32)
 
 
 class VoiceTranslateRequest(BaseModel):

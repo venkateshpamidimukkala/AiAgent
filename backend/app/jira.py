@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -146,3 +147,42 @@ def add_comment(issue_key: str, body: str, db=None) -> None:
         raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while adding the comment.") from exc
     except httpx.HTTPError as exc:
         raise RuntimeError("Jira is temporarily unavailable.") from exc
+
+
+def assigned_issues_missing_comment_today(db=None) -> list[dict[str, Any]]:
+    """Return assigned issues for the current Jira user without a comment today."""
+    base_url, email, api_token = _credentials(db)
+    params = {"jql": "assignee = currentUser() ORDER BY updated DESC", "maxResults": 100, "fields": "summary,status,priority,assignee"}
+    try:
+        response = httpx.get(f"{base_url}/rest/api/3/search/jql", params=params, headers=_headers(email, api_token), timeout=20)
+        if response.status_code in (404, 410):
+            response = httpx.get(f"{base_url}/rest/api/3/search", params=params, headers=_headers(email, api_token), timeout=20)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            raise RuntimeError("Jira rejected the credentials or assigned issue permission.") from exc
+        raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading assigned issues.") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError("Jira is temporarily unavailable.") from exc
+
+    today = datetime.now(timezone.utc).date()
+    missing = []
+    for item in response.json().get("issues", []):
+        issue_key = item.get("key", "")
+        try:
+            comments_response = httpx.get(f"{base_url}/rest/api/3/issue/{issue_key}/comment", params={"maxResults": 100, "orderBy": "-created"}, headers=_headers(email, api_token), timeout=20)
+            comments_response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise RuntimeError("Jira rejected the credentials or comment permission.") from exc
+            raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading comments.") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError("Jira is temporarily unavailable.") from exc
+        has_comment_today = any(
+            comment.get("created") and datetime.fromisoformat(comment["created"].replace("Z", "+00:00")).date() == today
+            for comment in comments_response.json().get("comments", [])
+        )
+        if not has_comment_today:
+            fields = item.get("fields") or {}
+            missing.append({"key": issue_key, "summary": fields.get("summary", "Jira issue"), "status": (fields.get("status") or {}).get("name", "Unknown"), "priority": (fields.get("priority") or {}).get("name", "Unassigned"), "assignee": (fields.get("assignee") or {}).get("displayName", email), "url": f"{base_url}/browse/{issue_key}"})
+    return missing

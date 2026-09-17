@@ -12,7 +12,7 @@ from .db import Base, engine, get_db
 from .models import AssistantRequest, DraftReply, Message, OAuthToken
 from .microsoft_auth import authorization_url, configured, exchange_code, token_expiry
 from .microsoft_graph import outlook_summary, sync_microsoft_messages
-from .jira import add_comment, configure as configure_jira, disconnect as disconnect_jira, restore as restore_jira, search_issues, status as jira_status
+from .jira import add_comment, assigned_issues_missing_comment_today, configure as configure_jira, disconnect as disconnect_jira, restore as restore_jira, search_issues, status as jira_status
 from .priority import score
 from .providers import dispatch_provider
 from .schemas import AssistantQueryOut, AssistantQueryRequest, AssistantRequestOut, ConfluenceAskRequest, ConfluenceConnect, ConfluencePageRequest, DraftCreate, DraftOut, JiraCommentRequest, JiraConnect, JiraSearchRequest, MessageOut, ReviseRequest, VoiceTranslateRequest
@@ -40,6 +40,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 def health(db: Session = Depends(get_db)):
     db.execute(select(1))
     return {"status": "ok", "database": "postgresql" if engine.url.drivername.startswith("postgresql") else "non-postgresql"}
+
 
 @app.get("/api/connections/status")
 def connections_status(db: Session = Depends(get_db)):
@@ -131,6 +132,13 @@ def disconnect_jira_endpoint(db: Session = Depends(get_db)):
     disconnect_jira(db)
     return {"connected": False}
 
+@app.get("/api/jira/daily-comments")
+def jira_daily_comments(db: Session = Depends(get_db)):
+    try:
+        return assigned_issues_missing_comment_today(db)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
 @app.post("/api/jira/search")
 def jira_search(payload: JiraSearchRequest, db: Session = Depends(get_db)):
     try:
@@ -158,12 +166,12 @@ def ask_confluence(payload: ConfluenceAskRequest, db: Session = Depends(get_db))
     try:
         if payload.url.strip():
             page = fetch_page(payload.url, db)
-            return {"answer": answer_confluence(payload.question, page), "source": {"title": page["title"], "url": page["url"]}}
+            return {**answer_confluence(payload.question, page, payload.focus), "source": {"title": page["title"], "url": page["url"]}}
         pages = search_pages(payload.question, db)
         if not pages:
             return {"answer": "I could not find matching Confluence pages for that question.", "source": {"title": "Confluence search", "url": confluence_status(db)["base_url"]}}
         context = {"title": "Confluence workspace search", "url": pages[0]["url"], "content": "\n\n".join(f"{page['title']}\n{page['content']}" for page in pages)}
-        return {"answer": answer_confluence(payload.question, context), "source": {"title": pages[0]["title"], "url": pages[0]["url"]}}
+        return {**answer_confluence(payload.question, context, payload.focus), "source": {"title": pages[0]["title"], "url": pages[0]["url"]}}
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
