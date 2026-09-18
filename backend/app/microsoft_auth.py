@@ -5,7 +5,7 @@ import msal
 from fastapi import HTTPException
 from .config import settings
 
-_pending_states: set[str] = set()
+_pending_flows: dict[str, dict[str, Any]] = {}
 
 
 def configured() -> bool:
@@ -23,20 +23,32 @@ def _client() -> msal.ConfidentialClientApplication:
 
 
 def scopes() -> list[str]:
-    return settings.microsoft_scopes.split()
+    # MSAL adds the protocol scopes itself. Passing these explicitly causes
+    # get_authorization_request_url() to raise ValueError, which otherwise
+    # surfaces as a generic 500 from the login endpoint.
+    reserved_scopes = {"offline_access", "openid", "profile"}
+    return [scope for scope in settings.microsoft_scopes.split() if scope.lower() not in reserved_scopes]
 
 
 def authorization_url() -> str:
     state = token_urlsafe(32)
-    _pending_states.add(state)
-    return _client().get_authorization_request_url(scopes(), state=state, redirect_uri=settings.microsoft_redirect_uri, prompt="select_account")
+    # MSAL's auth-code-flow API generates and retains the PKCE verifier and
+    # sends the corresponding S256 challenge in the authorization URL.
+    flow = _client().initiate_auth_code_flow(
+        scopes(),
+        state=state,
+        redirect_uri=settings.microsoft_redirect_uri,
+        prompt="select_account",
+    )
+    _pending_flows[state] = flow
+    return flow["auth_uri"]
 
 
 def exchange_code(code: str, state: str) -> dict[str, Any]:
-    if state not in _pending_states:
+    flow = _pending_flows.pop(state, None)
+    if flow is None:
         raise HTTPException(400, "Invalid or expired Microsoft OAuth state.")
-    _pending_states.remove(state)
-    result = _client().acquire_token_by_authorization_code(code, scopes=scopes(), redirect_uri=settings.microsoft_redirect_uri)
+    result = _client().acquire_token_by_auth_code_flow(flow, {"code": code, "state": state}, scopes=scopes())
     if "access_token" not in result:
         raise HTTPException(400, result.get("error_description", "Microsoft authorization failed."))
     return result

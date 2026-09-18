@@ -51,6 +51,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo Validating backend dependencies...
+pushd "%BACKEND_DIR%"
+"%VENV_DIR%\Scripts\python.exe" -m pip check
+if errorlevel 1 (
+    echo ERROR: Backend dependency validation failed.
+    popd
+    pause
+    exit /b 1
+)
+"%VENV_DIR%\Scripts\python.exe" -c "import msal, fastapi, uvicorn; import app.main; print('Backend dependencies: OK')"
+if errorlevel 1 (
+    echo ERROR: Backend imports failed. Ensure requirements.txt installed successfully.
+    popd
+    pause
+    exit /b 1
+)
+popd
+
 if not exist "%FRONTEND_DIR%\node_modules" (
     echo Installing frontend dependencies...
     pushd "%FRONTEND_DIR%"

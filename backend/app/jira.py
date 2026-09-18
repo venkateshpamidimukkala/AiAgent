@@ -1,7 +1,7 @@
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -110,7 +110,17 @@ def _jira_request(method: str, url: str, email: str, api_token: str, **kwargs: A
     response = httpx.request(method, url, headers={**_headers(email, api_token), **kwargs.pop("headers", {})}, timeout=20, **kwargs)
     if response.status_code in (401, 403):
         raise RuntimeError("Jira rejected the credentials or permission for this operation.")
-    response.raise_for_status()
+    if response.status_code >= 400:
+        detail = ""
+        try:
+            error_body = response.json()
+            errors = error_body.get("errors") or {}
+            messages = error_body.get("errorMessages") or []
+            detail = "; ".join([*messages, *[str(value) for value in errors.values()]])
+        except (ValueError, TypeError):
+            detail = response.text.strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"Jira returned HTTP {response.status_code}{suffix}")
     return response
 
 
@@ -173,10 +183,186 @@ def search_issues(query: str, board_name: str = "", db=None) -> list[dict[str, A
     return results
 
 
+def _assigned_issue_group(status: str) -> str:
+    normalized = status.casefold()
+    if any(value in normalized for value in ("done", "closed", "resolved", "complete")):
+        return "Done"
+    if any(value in normalized for value in ("block", "impediment")):
+        return "Blocked"
+    if any(value in normalized for value in ("review", "test", "qa", "uat")):
+        return "Review/Testing"
+    if any(value in normalized for value in ("progress", "development", "developing")):
+        return "In Progress"
+    return "To Do"
+
+
+def _field_value(fields: dict[str, Any], field_ids: set[str]) -> Any:
+    for field_id in field_ids:
+        if fields.get(field_id) is not None:
+            return fields[field_id]
+    return None
+
+
+def _sprint_name(value: Any) -> str | None:
+    if isinstance(value, list):
+        value = value[-1] if value else None
+    if isinstance(value, dict):
+        return value.get("name") or value.get("value")
+    if isinstance(value, str):
+        # Jira Cloud commonly returns sprint values as serialized objects.
+        for part in value.split(","):
+            if part.strip().startswith("name="):
+                return part.split("=", 1)[1].strip()
+        return value
+    return None
+
+
+def _custom_field_ids(field_metadata: list[dict[str, Any]], terms: tuple[str, ...], fallbacks: set[str]) -> set[str]:
+    result = set(fallbacks)
+    for field in field_metadata:
+        name = str(field.get("name", "")).casefold()
+        if any(term in name for term in terms):
+            field_id = field.get("id")
+            if field_id:
+                result.add(field_id)
+    return result
+
+
+def assigned_issues_report(db=None) -> dict[str, Any]:
+    """Return all issues assigned to the authenticated Jira user and report metrics."""
+    base_url, email, api_token = _credentials(db)
+    jql = "assignee = currentUser() ORDER BY updated DESC"
+    fields = "summary,status,priority,assignee,project,duedate,created,updated,customfield_10016,customfield_10020"
+    try:
+        metadata_response = _jira_request("GET", f"{base_url}/rest/api/3/field", email, api_token)
+        field_metadata = metadata_response.json()
+    except (RuntimeError, httpx.HTTPError):
+        field_metadata = []
+    sprint_ids = _custom_field_ids(field_metadata, ("sprint",), {"customfield_10020"})
+    story_point_ids = _custom_field_ids(field_metadata, ("story point", "story points"), {"customfield_10016"})
+    fields = ",".join(dict.fromkeys([*fields.split(","), *sprint_ids, *story_point_ids]))
+
+    issues: list[dict[str, Any]] = []
+    try:
+        next_page_token = None
+        while True:
+            params = {"jql": jql, "maxResults": 100, "fields": fields}
+            if next_page_token:
+                params["nextPageToken"] = next_page_token
+            response = httpx.get(f"{base_url}/rest/api/3/search/jql", params=params, headers=_headers(email, api_token), timeout=20)
+            if response.status_code in (404, 410):
+                break
+            response.raise_for_status()
+            page = response.json()
+            page_issues = page.get("issues", [])
+            issues.extend(page_issues)
+            next_page_token = page.get("nextPageToken")
+            if not next_page_token or not page_issues:
+                break
+        if not issues and response.status_code in (404, 410):
+            start_at = 0
+            while True:
+                response = httpx.get(f"{base_url}/rest/api/3/search", params={"jql": jql, "startAt": start_at, "maxResults": 100, "fields": fields}, headers=_headers(email, api_token), timeout=20)
+                response.raise_for_status()
+                page = response.json()
+                page_issues = page.get("issues", [])
+                issues.extend(page_issues)
+                if not page_issues or start_at + len(page_issues) >= page.get("total", 0):
+                    break
+                start_at += len(page_issues)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            raise RuntimeError("Jira rejected the credentials or assigned issue permission.") from exc
+        raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading assigned issues.") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError("Jira is temporarily unavailable.") from exc
+
+    today = datetime.now(timezone.utc).date()
+    seven_days_ago = today - timedelta(days=7)
+    groups = {name: [] for name in ("In Progress", "To Do", "Blocked", "Review/Testing", "Done")}
+    normalized_issues = []
+    for item in issues:
+        values = item.get("fields") or {}
+        status = (values.get("status") or {}).get("name", "Unknown")
+        priority = (values.get("priority") or {}).get("name", "Unassigned")
+        due_date = values.get("duedate")
+        updated = values.get("updated")
+        issue = {
+            "issue_key": item.get("key", ""),
+            "summary": values.get("summary", "Jira issue"),
+            "status": status,
+            "priority": priority,
+            "sprint": _sprint_name(_field_value(values, sprint_ids)),
+            "project": (values.get("project") or {}).get("name") or (values.get("project") or {}).get("key"),
+            "assignee": (values.get("assignee") or {}).get("displayName", email),
+            "story_points": _field_value(values, story_point_ids),
+            "due_date": due_date,
+            "created_date": values.get("created"),
+            "updated_date": updated,
+            "issue_url": f"{base_url}/browse/{item.get('key', '')}",
+        }
+        normalized_issues.append(issue)
+        groups[_assigned_issue_group(status)].append(issue)
+
+    def issue_date(issue: dict[str, Any], key: str):
+        value = issue.get(key)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).date() if value else None
+
+    high_priority = [issue for issue in normalized_issues if issue["priority"].casefold() in {"highest", "high", "critical", "blocker"}]
+    overdue = [issue for issue in normalized_issues if issue["due_date"] and issue_date(issue, "due_date") < today and issue["status"].casefold() != "done"]
+    recently_updated = [issue for issue in normalized_issues if issue_date(issue, "updated_date") and issue_date(issue, "updated_date") >= seven_days_ago]
+    return {
+        "jql": jql,
+        "total_ticket_count": len(normalized_issues),
+        "count_per_status": {status: sum(issue["status"] == status for issue in normalized_issues) for status in sorted({issue["status"] for issue in normalized_issues})},
+        "high_priority_tickets": high_priority,
+        "overdue_tickets": overdue,
+        "updated_last_7_days": recently_updated,
+        "groups": groups,
+    }
+
+
+def get_issue(issue_key: str, db=None) -> dict[str, Any]:
+    """Load one Jira issue by its exact key, including fields used by the UI."""
+    base_url, email, api_token = _credentials(db)
+    issue_key = issue_key.strip()
+    if not issue_key:
+        raise ValueError("Enter a Jira issue key.")
+    fields = "summary,description,status,priority,assignee,updated,duedate,issuetype,labels"
+    try:
+        response = _jira_request(
+            "GET",
+            f"{base_url}/rest/api/3/issue/{quote(issue_key, safe='')}",
+            email,
+            api_token,
+            params={"fields": fields},
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(f"Unable to load Jira issue {issue_key}: {exc}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading issue {issue_key}.") from exc
+
+    item = response.json()
+    values = item.get("fields") or {}
+    return {
+        "key": item.get("key", issue_key),
+        "summary": values.get("summary", "Jira issue"),
+        "status": (values.get("status") or {}).get("name", "Unknown"),
+        "priority": (values.get("priority") or {}).get("name", "Unassigned"),
+        "assignee": (values.get("assignee") or {}).get("displayName", "Unassigned"),
+        "updated": values.get("updated"),
+        "url": f"{base_url}/browse/{item.get('key', issue_key)}",
+        "description": _text_from_adf(values.get("description")),
+        "issue_type": (values.get("issuetype") or {}).get("name", "Task"),
+        "labels": values.get("labels") or [],
+        "due_date": values.get("duedate"),
+    }
+
+
 def issue_comments(issue_key: str, db=None) -> list[dict[str, Any]]:
     base_url, email, api_token = _credentials(db)
     try:
-        response = _jira_request("GET", f"{base_url}/rest/api/3/issue/{issue_key.strip()}/comment", email, api_token, params={"maxResults": 100, "orderBy": "created"})
+        response = _jira_request("GET", f"{base_url}/rest/api/3/issue/{quote(issue_key.strip(), safe='')}/comment", email, api_token, params={"maxResults": 100, "orderBy": "created"})
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading comments.") from exc
     return [{
@@ -189,16 +375,19 @@ def issue_comments(issue_key: str, db=None) -> list[dict[str, Any]]:
 
 def add_comment(issue_key: str, body: str, reply_to: str | None = None, db=None) -> None:
     base_url, email, api_token = _credentials(db)
+    issue_key = issue_key.strip()
+    body = body.strip()
+    if not issue_key or not body:
+        raise ValueError("Enter a Jira issue key and comment.")
     if reply_to:
         body = f"Reply to Jira comment {reply_to}:\n\n{body.strip()}"
     payload = {"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": body}]}]}}
     try:
-        response = httpx.post(f"{base_url}/rest/api/3/issue/{issue_key.strip()}/comment", json=payload, headers={**_headers(email, api_token), "Content-Type": "application/json"}, timeout=20)
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (401, 403):
+        _jira_request("POST", f"{base_url}/rest/api/3/issue/{quote(issue_key, safe='')}/comment", email, api_token, json=payload, headers={"Content-Type": "application/json"})
+    except RuntimeError as exc:
+        if str(exc) == "Jira rejected the credentials or permission for this operation.":
             raise RuntimeError("Jira rejected the credentials or comment permission.") from exc
-        raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while adding the comment.") from exc
+        raise RuntimeError(f"Unable to add the Jira comment: {exc}") from exc
     except httpx.HTTPError as exc:
         raise RuntimeError("Jira is temporarily unavailable.") from exc
 

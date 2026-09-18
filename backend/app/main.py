@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
+from urllib.parse import urlencode
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,12 +15,81 @@ from .db import Base, engine, get_db
 from .models import AssistantRequest, DraftReply, Message, OAuthToken
 from .microsoft_auth import authorization_url, configured, exchange_code, token_expiry
 from .microsoft_graph import outlook_summary, sync_microsoft_messages
-from .jira import add_comment, assigned_issues_missing_comment_today, configure as configure_jira, disconnect as disconnect_jira, issue_comments, restore as restore_jira, search_issues, status as jira_status
+from .jira import add_comment, assigned_issues_missing_comment_today, assigned_issues_report, configure as configure_jira, disconnect as disconnect_jira, get_issue, issue_comments, restore as restore_jira, search_issues, status as jira_status
 from .priority import score
 from .providers import dispatch_provider
 from .schemas import AssistantQueryOut, AssistantQueryRequest, AssistantRequestOut, ConfluenceAskRequest, ConfluenceConnect, ConfluencePageRequest, DraftCreate, DraftOut, JiraCommentRequest, JiraConnect, JiraSearchRequest, MessageOut, ReviseRequest, VoiceTranslateRequest
 
 logger = logging.getLogger(__name__)
+
+
+def seed_mock_microsoft_messages(db: Session) -> None:
+    """Add stable Outlook and Teams demo messages for local development.
+
+    The seed is intentionally idempotent so it also works when the local
+    database already contains the original MVP seed data.
+    """
+    rows = [
+        (
+            "outlook",
+            "demo-outlook-release-blocker",
+            "sarah.chen@acme.test",
+            "P1: Production release blocker",
+            "The payment service is still failing in production. Can you confirm the rollback decision before 2:00 PM?",
+        ),
+        (
+            "outlook",
+            "demo-outlook-customer-follow-up",
+            "michael.roberts@acme.test",
+            "Customer success review - action items",
+            "Thanks for the review today. Please send the updated action items and owners before tomorrow morning.",
+        ),
+        (
+            "outlook",
+            "demo-outlook-design-review",
+            "priya.shah@acme.test",
+            "Design review notes for the communication hub",
+            "I attached the latest inbox flow. Let me know if the conversation detail view is ready for engineering review.",
+        ),
+        (
+            "teams",
+            "demo-teams-standup",
+            "daniel.kim@acme.test",
+            "Engineering · Daily stand-up",
+            "The API work is on track. I am pairing with Priya on the Graph sync edge cases this afternoon.",
+        ),
+        (
+            "teams",
+            "demo-teams-customer-call",
+            "lisa.martin@acme.test",
+            "Customer Success · Customer call moved to 3 PM",
+            "The customer call moved to 3 PM today. Can you confirm that you will be able to join?",
+        ),
+        (
+            "teams",
+            "demo-teams-launch-room",
+            "alex.johnson@acme.test",
+            "Launch room · Final go-live checklist",
+            "Please review the final checklist and call out anything that could put Friday's go-live at risk.",
+        ),
+    ]
+
+    external_ids = {external_id for external_id, in db.query(Message.external_id).all()}
+    for source, external_id, sender, subject, body in rows:
+        if external_id in external_ids:
+            continue
+        value, label = score(sender, subject, body)
+        db.add(Message(
+            source=source,
+            external_id=external_id,
+            sender=sender,
+            subject=subject,
+            body=body,
+            thread_id=external_id,
+            priority_score=value,
+            priority_label=label,
+        ))
+    db.commit()
 
 
 @asynccontextmanager
@@ -37,11 +107,12 @@ async def lifespan(_: FastAPI):
         restore_jira(db)
         restore_confluence(db)
         if not db.scalar(select(Message.id).limit(1)):
-            rows = [("gmail", "manager@acme.test", "P1: Production release blocker", "The release is blocked and needs a decision today."), ("teams", "client@acme.test", "Urgent: call moved to 3 PM", "Can you confirm attendance for the customer call?"), ("jira", "jira@acme.test", "Update documentation", "Please review the normal-priority documentation task.")]
+            rows = [("gmail", "manager@acme.test", "P1: Production release blocker", "The release is blocked and needs a decision today."), ("jira", "jira@acme.test", "Update documentation", "Please review the normal-priority documentation task.")]
             for source, sender, subject, body in rows:
                 value, label = score(sender, subject, body)
                 db.add(Message(source=source, external_id=f"demo-{source}", sender=sender, subject=subject, body=body, priority_score=value, priority_label=label))
             db.commit()
+        seed_mock_microsoft_messages(db)
     yield
 
 
@@ -151,10 +222,24 @@ def jira_daily_comments(db: Session = Depends(get_db)):
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(502, str(exc)) from exc
 
+@app.get("/api/jira/assigned-issues")
+def jira_assigned_issues(db: Session = Depends(get_db)):
+    try:
+        return assigned_issues_report(db)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(502, str(exc)) from exc
+
 @app.post("/api/jira/search")
 def jira_search(payload: JiraSearchRequest, db: Session = Depends(get_db)):
     try:
         return {"issues": search_issues(payload.query, payload.board_name, db)}
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/api/jira/issues/{issue_key}")
+def jira_issue(issue_key: str, db: Session = Depends(get_db)):
+    try:
+        return get_issue(issue_key, db)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -211,9 +296,10 @@ def microsoft_login():
     return RedirectResponse(authorization_url())
 
 @app.get("/api/auth/microsoft/callback")
-def microsoft_callback(code: str | None = None, state: str | None = None, error: str | None = None, db: Session = Depends(get_db)):
+def microsoft_callback(code: str | None = None, state: str | None = None, error: str | None = None, error_description: str | None = None, db: Session = Depends(get_db)):
     if error:
-        return RedirectResponse(f"{settings.frontend_origin}/?connected=microsoft&error={error}")
+        query = urlencode({"connected": "microsoft", "error": error, "error_description": error_description or "Microsoft authorization failed."})
+        return RedirectResponse(f"{settings.frontend_origin}/?{query}")
     if not code or not state:
         raise HTTPException(400, "Microsoft OAuth callback did not include code and state.")
     result = exchange_code(code, state)
