@@ -98,32 +98,70 @@ def _validate(credentials: dict[str, str]) -> None:
         raise RuntimeError("Jira is temporarily unavailable. Check the site URL and network connection.") from exc
 
 
-def search_issues(query: str, db=None) -> list[dict[str, Any]]:
+def _text_from_adf(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, dict):
+        return ""
+    return "".join(_text_from_adf(child) for child in value.get("content", []))
+
+
+def _jira_request(method: str, url: str, email: str, api_token: str, **kwargs: Any) -> httpx.Response:
+    response = httpx.request(method, url, headers={**_headers(email, api_token), **kwargs.pop("headers", {})}, timeout=20, **kwargs)
+    if response.status_code in (401, 403):
+        raise RuntimeError("Jira rejected the credentials or permission for this operation.")
+    response.raise_for_status()
+    return response
+
+
+def search_issues(query: str, board_name: str = "", db=None) -> list[dict[str, Any]]:
     base_url, email, api_token = _credentials(db)
     query = query.strip()
-    if not query:
+    board_name = board_name.strip()
+    if not query and not board_name:
         raise ValueError("Enter a Jira issue search or question.")
     escaped = query.replace('"', '\\"')
-    jql = f'text ~ "{escaped}" ORDER BY updated DESC'
-    params = {"jql": jql, "maxResults": 10, "fields": "summary,description,status,priority,assignee,updated"}
+    jql = f'text ~ "{escaped}" ORDER BY updated DESC' if query else ""
+    fields = "summary,description,status,priority,assignee,updated"
     try:
         # Jira Cloud deprecated /rest/api/3/search in favour of /search/jql.
         # Keep the old endpoint as a compatibility fallback for older Jira
         # Server/Data Center installations.
-        response = httpx.get(f"{base_url}/rest/api/3/search/jql", params=params, headers=_headers(email, api_token), timeout=20)
-        if response.status_code in (404, 410):
-            response = httpx.get(f"{base_url}/rest/api/3/search", params=params, headers=_headers(email, api_token), timeout=20)
-        response.raise_for_status()
+        if board_name:
+            boards = _jira_request("GET", f"{base_url}/rest/agile/1.0/board", email, api_token, params={"name": board_name, "maxResults": 50})
+            board = next((item for item in boards.json().get("values", []) if item.get("name", "").casefold() == board_name.casefold()), None)
+            if board is None:
+                raise ValueError(f'Jira board "{board_name}" was not found.')
+            issues = []
+            start_at = 0
+            while True:
+                params = {"startAt": start_at, "maxResults": 50, "fields": fields}
+                if jql:
+                    params["jql"] = jql
+                response = _jira_request("GET", f"{base_url}/rest/agile/1.0/board/{board['id']}/issue", email, api_token, params=params)
+                page = response.json()
+                page_issues = page.get("issues", [])
+                issues.extend(page_issues)
+                if page.get("isLast", False) or not page_issues:
+                    break
+                start_at += len(page_issues)
+        else:
+            params = {"jql": jql, "maxResults": 100, "fields": fields}
+            response = httpx.get(f"{base_url}/rest/api/3/search/jql", params=params, headers=_headers(email, api_token), timeout=20)
+            if response.status_code in (404, 410):
+                response = httpx.get(f"{base_url}/rest/api/3/search", params=params, headers=_headers(email, api_token), timeout=20)
+            response.raise_for_status()
+            issues = response.json().get("issues", [])
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
             raise RuntimeError("Jira rejected the credentials or issue search permission.") from exc
         raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while searching.") from exc
     except httpx.HTTPError as exc:
         raise RuntimeError("Jira is temporarily unavailable.") from exc
-    issues = []
-    for item in response.json().get("issues", []):
+    results = []
+    for item in issues:
         fields = item.get("fields") or {}
-        issues.append({
+        results.append({
             "key": item.get("key", ""),
             "summary": fields.get("summary", "Jira issue"),
             "status": (fields.get("status") or {}).get("name", "Unknown"),
@@ -132,11 +170,27 @@ def search_issues(query: str, db=None) -> list[dict[str, Any]]:
             "updated": fields.get("updated"),
             "url": f"{base_url}/browse/{item.get('key', '')}",
         })
-    return issues
+    return results
 
 
-def add_comment(issue_key: str, body: str, db=None) -> None:
+def issue_comments(issue_key: str, db=None) -> list[dict[str, Any]]:
     base_url, email, api_token = _credentials(db)
+    try:
+        response = _jira_request("GET", f"{base_url}/rest/api/3/issue/{issue_key.strip()}/comment", email, api_token, params={"maxResults": 100, "orderBy": "created"})
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Jira returned HTTP {exc.response.status_code} while loading comments.") from exc
+    return [{
+        "id": comment.get("id", ""),
+        "author": (comment.get("author") or {}).get("displayName", "Jira user"),
+        "created": comment.get("created"),
+        "body": _text_from_adf(comment.get("body")),
+    } for comment in response.json().get("comments", [])]
+
+
+def add_comment(issue_key: str, body: str, reply_to: str | None = None, db=None) -> None:
+    base_url, email, api_token = _credentials(db)
+    if reply_to:
+        body = f"Reply to Jira comment {reply_to}:\n\n{body.strip()}"
     payload = {"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": body}]}]}}
     try:
         response = httpx.post(f"{base_url}/rest/api/3/issue/{issue_key.strip()}/comment", json=payload, headers={**_headers(email, api_token), "Content-Type": "application/json"}, timeout=20)

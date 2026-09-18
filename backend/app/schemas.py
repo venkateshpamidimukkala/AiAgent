@@ -34,12 +34,14 @@ class JiraConnect(ConfluenceConnect):
 
 
 class JiraSearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=2000)
+    query: str = Field(default="", max_length=2000)
+    board_name: str = Field(default="", max_length=255)
 
 
 class JiraCommentRequest(BaseModel):
     issue_key: str = Field(min_length=1, max_length=64)
     body: str = Field(min_length=1, max_length=10000)
+    reply_to: str | None = Field(default=None, max_length=64)
 
 
 class ConfluencePageRequest(BaseModel):

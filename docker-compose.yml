@@ -18,9 +18,6 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_STT_MODEL: ${OPENAI_STT_MODEL:-whisper-1}
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
-      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
       MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:-http://localhost:8000/api/auth/microsoft/callback}
       MICROSOFT_SCOPES: ${MICROSOFT_SCOPES:-User.Read offline_access Mail.ReadWrite Mail.Send Calendars.Read Chat.Read ChannelMessage.Read.All Team.ReadBasic.All}
       CONFLUENCE_BASE_URL: ${CONFLUENCE_BASE_URL:-}

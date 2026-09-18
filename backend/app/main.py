@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import logging
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,18 +9,29 @@ from sqlalchemy.orm import Session
 from .ai import answer_confluence, answer_workspace, draft_reply, revise, translate_for_voice
 from .confluence import configure as configure_confluence, disconnect as disconnect_confluence, fetch_page, restore as restore_confluence, search_pages, status as confluence_status
 from .config import settings
+from .config import ENV_FILE
 from .db import Base, engine, get_db
 from .models import AssistantRequest, DraftReply, Message, OAuthToken
 from .microsoft_auth import authorization_url, configured, exchange_code, token_expiry
 from .microsoft_graph import outlook_summary, sync_microsoft_messages
-from .jira import add_comment, assigned_issues_missing_comment_today, configure as configure_jira, disconnect as disconnect_jira, restore as restore_jira, search_issues, status as jira_status
+from .jira import add_comment, assigned_issues_missing_comment_today, configure as configure_jira, disconnect as disconnect_jira, issue_comments, restore as restore_jira, search_issues, status as jira_status
 from .priority import score
 from .providers import dispatch_provider
 from .schemas import AssistantQueryOut, AssistantQueryRequest, AssistantRequestOut, ConfluenceAskRequest, ConfluenceConnect, ConfluencePageRequest, DraftCreate, DraftOut, JiraCommentRequest, JiraConnect, JiraSearchRequest, MessageOut, ReviseRequest, VoiceTranslateRequest
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logger.info(
+        "Microsoft OAuth configuration loaded: client_id=%s, client_secret=%s, "
+        "tenant_id=%s, env_file=%s",
+        bool(settings.microsoft_client_id),
+        bool(settings.microsoft_client_secret),
+        bool(settings.microsoft_tenant_id),
+        ENV_FILE,
+    )
     Base.metadata.create_all(engine)
     with next(get_db()) as db:
         restore_jira(db)
@@ -142,15 +154,22 @@ def jira_daily_comments(db: Session = Depends(get_db)):
 @app.post("/api/jira/search")
 def jira_search(payload: JiraSearchRequest, db: Session = Depends(get_db)):
     try:
-        return {"issues": search_issues(payload.query, db)}
+        return {"issues": search_issues(payload.query, payload.board_name, db)}
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
 @app.post("/api/jira/comment")
 def jira_comment(payload: JiraCommentRequest, db: Session = Depends(get_db)):
     try:
-        add_comment(payload.issue_key, payload.body, db)
+        add_comment(payload.issue_key, payload.body, payload.reply_to, db)
         return {"status": "added"}
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@app.get("/api/jira/issues/{issue_key}/comments")
+def jira_issue_comments(issue_key: str, db: Session = Depends(get_db)):
+    try:
+        return {"comments": issue_comments(issue_key, db)}
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
