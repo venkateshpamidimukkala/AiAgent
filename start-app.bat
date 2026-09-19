@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 REM Unified Voice Assistant launcher
-REM Starts FastAPI on http://localhost:8000 and Angular on http://localhost:4200
+REM Starts FastAPI on http://localhost:8100 and Angular on http://localhost:4300
 
 set "PROJECT_ROOT=%~dp0"
 set "BACKEND_DIR=%PROJECT_ROOT%backend"
@@ -83,18 +83,18 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 )
 
 echo Starting FastAPI backend...
-start "Unified Assistant - Backend" cmd /k "cd /d "%BACKEND_DIR%" && "%VENV_DIR%\Scripts\python.exe" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "Unified Assistant - Backend" cmd /k "cd /d "%BACKEND_DIR%" && "%VENV_DIR%\Scripts\python.exe" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8100"
 
  timeout /t 2 /nobreak >nul
 
 echo Starting Angular frontend...
-start "Unified Assistant - Frontend" cmd /k "cd /d "%FRONTEND_DIR%" && call npm start"
+start "Unified Assistant - Frontend" cmd /k "cd /d "%FRONTEND_DIR%" && call npm start -- --port 4300"
 
 echo.
 echo Application started.
-echo Backend:  http://localhost:8000
- echo API docs: http://localhost:8000/docs
- echo Frontend: http://localhost:4200
+echo Backend:  http://localhost:8100
+ echo API docs: http://localhost:8100/docs
+ echo Frontend: http://localhost:4300
  echo.
 echo Close the two opened terminal windows to stop the application.
  timeout /t 5 /nobreak >nul

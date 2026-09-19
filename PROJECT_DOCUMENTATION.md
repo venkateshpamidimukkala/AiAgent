@@ -1,4 +1,4 @@
-# Unified Voice Assistant
+﻿# Unified Voice Assistant
 
 ## 1. Project Overview
 
@@ -164,35 +164,35 @@ The Confluence API token must have permission to search and read the required sp
 
 ```text
 AiAgent/
-├── .env.example
-├── backend/
-│   ├── app/
-│   │   ├── ai.py
-│   │   ├── config.py
-│   │   ├── confluence.py
-│   │   ├── db.py
-│   │   ├── main.py
-│   │   ├── microsoft_auth.py
-│   │   ├── microsoft_graph.py
-│   │   ├── models.py
-│   │   ├── priority.py
-│   │   ├── providers.py
-│   │   └── schemas.py
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── app.component.ts
-│   │   ├── app.component.html
-│   │   └── styles.css
-│   ├── Dockerfile
-│   ├── angular.json
-│   ├── package.json
-│   └── proxy.conf.json
-├── docker-compose.yml
-├── start-app.bat
-├── README.md
-└── PROJECT_DOCUMENTATION.md
+â”œâ”€â”€ .env.example
+â”œâ”€â”€ backend/
+â”‚   â”œâ”€â”€ app/
+â”‚   â”‚   â”œâ”€â”€ ai.py
+â”‚   â”‚   â”œâ”€â”€ config.py
+â”‚   â”‚   â”œâ”€â”€ confluence.py
+â”‚   â”‚   â”œâ”€â”€ db.py
+â”‚   â”‚   â”œâ”€â”€ main.py
+â”‚   â”‚   â”œâ”€â”€ microsoft_auth.py
+â”‚   â”‚   â”œâ”€â”€ microsoft_graph.py
+â”‚   â”‚   â”œâ”€â”€ models.py
+â”‚   â”‚   â”œâ”€â”€ priority.py
+â”‚   â”‚   â”œâ”€â”€ providers.py
+â”‚   â”‚   â””â”€â”€ schemas.py
+â”‚   â”œâ”€â”€ Dockerfile
+â”‚   â””â”€â”€ requirements.txt
+â”œâ”€â”€ frontend/
+â”‚   â”œâ”€â”€ src/
+â”‚   â”‚   â”œâ”€â”€ app.component.ts
+â”‚   â”‚   â”œâ”€â”€ app.component.html
+â”‚   â”‚   â””â”€â”€ styles.css
+â”‚   â”œâ”€â”€ Dockerfile
+â”‚   â”œâ”€â”€ angular.json
+â”‚   â”œâ”€â”€ package.json
+â”‚   â””â”€â”€ proxy.conf.json
+â”œâ”€â”€ docker-compose.yml
+â”œâ”€â”€ start-app.bat
+â”œâ”€â”€ README.md
+â””â”€â”€ PROJECT_DOCUMENTATION.md
 ```
 
 ## 5. Local Development Setup
@@ -215,9 +215,9 @@ start-app.bat
 
 The launcher creates the backend virtual environment if required, installs backend dependencies, installs frontend dependencies if required, and starts:
 
-- Backend: `http://localhost:8000`
-- API documentation: `http://localhost:8000/docs`
-- Frontend: `http://localhost:4200`
+- Backend: `http://localhost:8100`
+- API documentation: `http://localhost:8100/docs`
+- Frontend: `http://localhost:4300`
 
 ### Option B: Start the backend manually
 
@@ -226,7 +226,7 @@ cd C:\Users\GCCHackVM\hackthon\PNCAgent\AiAgent\backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
 ```
 
 ### Start the frontend manually
@@ -240,13 +240,13 @@ npm start
 Open:
 
 ```text
-http://localhost:4200
+http://localhost:4300
 ```
 
 The Angular development proxy forwards `/api` requests to:
 
 ```text
-http://localhost:8000
+http://localhost:8100
 ```
 
 ### Option C: Docker Compose
@@ -267,7 +267,7 @@ Copy `.env.example` to `backend/.env` and set values appropriate for the environ
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://assistant:admin@localhost:5432/assistant
-FRONTEND_ORIGIN=http://localhost:4200
+FRONTEND_ORIGIN=http://localhost:4300
 
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4o-mini
@@ -276,7 +276,7 @@ OPENAI_STT_MODEL=whisper-1
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
 MICROSOFT_TENANT_ID=common
-MICROSOFT_REDIRECT_URI=http://localhost:8000/api/auth/microsoft/callback
+MICROSOFT_REDIRECT_URI=http://localhost:8100/api/auth/microsoft/callback
 MICROSOFT_SCOPES=User.Read offline_access Mail.ReadWrite Mail.Send Chat.Read ChannelMessage.Read.All Team.ReadBasic.All
 
 CONFLUENCE_BASE_URL=https://your-company.atlassian.net
@@ -300,7 +300,7 @@ Never commit the following values:
 4. Add this redirect URI:
 
 ```text
-http://localhost:8000/api/auth/microsoft/callback
+http://localhost:8100/api/auth/microsoft/callback
 ```
 
 5. Copy the application client ID.
@@ -640,13 +640,13 @@ cd C:\Users\GCCHackVM\hackthon\PNCAgent\AiAgent\backend
 With the backend running, open:
 
 ```text
-http://localhost:8000/docs
+http://localhost:8100/docs
 ```
 
 ### Manual Confluence test
 
 1. Start backend and frontend.
-2. Open `http://localhost:4200`.
+2. Open `http://localhost:4300`.
 3. Select **Confluence**.
 4. Enter the Atlassian site URL, email, and API token.
 5. Confirm the status changes to **Connected**.
@@ -686,10 +686,10 @@ http://localhost:8000/docs
 
 | Service | URL |
 |---|---|
-| Frontend | `http://localhost:4200` |
-| Backend | `http://localhost:8000` |
-| API documentation | `http://localhost:8000/docs` |
-| Health check | `http://localhost:8000/api/health` |
+| Frontend | `http://localhost:4300` |
+| Backend | `http://localhost:8100` |
+| API documentation | `http://localhost:8100/docs` |
+| Health check | `http://localhost:8100/api/health` |
 | PostgreSQL | `localhost:5432` |
 
 ### Project location

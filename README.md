@@ -10,7 +10,7 @@ An extensible FastAPI + Angular MVP for ranking work communications, drafting re
 cd C:\Users\GCCHackVM\hackthon\PNCAgent\AiAgent\backend
 python -m venv .venv  # only needed once
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+\.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
 ```
 
 Alternatively, from this `backend` directory, run `run-backend.bat`. It always
@@ -19,7 +19,7 @@ starting Uvicorn. If you prefer activation, use:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
 ```
 
 Do not start this backend with a different global interpreter such as
@@ -47,7 +47,7 @@ Outlook and Teams use Microsoft Graph, so one Microsoft OAuth connection authori
 
 1. Open the Microsoft Entra admin center and go to **App registrations → New registration**.
 2. Select **Accounts in any organizational directory and personal Microsoft accounts** for local testing.
-3. Add this Web redirect URI exactly: `http://localhost:8000/api/auth/microsoft/callback`.
+3. Add this Web redirect URI exactly: `http://localhost:8100/api/auth/microsoft/callback`.
 4. Copy the **Application (client) ID**.
 5. Go to **Certificates & secrets → New client secret** and copy the secret value immediately.
 6. Under **API permissions → Microsoft Graph → Delegated permissions**, add `User.Read`, `offline_access`, `Mail.ReadWrite`, `Mail.Send`, `Chat.Read`, `ChannelMessage.Read.All`, and `Team.ReadBasic.All`.
@@ -62,7 +62,7 @@ Outlook and Teams use Microsoft Graph, so one Microsoft OAuth connection authori
 
 1. Open [Microsoft Entra admin center](https://entra.microsoft.com/) and go to **App registrations → New registration**.
 2. Select **Accounts in any organizational directory and personal Microsoft accounts** for local testing.
-3. Add this Web redirect URI exactly: `http://localhost:8000/api/auth/microsoft/callback`.
+3. Add this Web redirect URI exactly: `http://localhost:8100/api/auth/microsoft/callback`.
 4. Copy the **Application (client) ID**.
 5. Go to **Certificates & secrets → New client secret** and copy the secret value immediately.
 6. Under **API permissions → Microsoft Graph → Delegated permissions**, add:
@@ -86,7 +86,7 @@ npm install
 npm start
 ```
 
-Open `http://localhost:4200`. API requests are proxied to `http://localhost:8000`.
+Open `http://localhost:4300`. API requests are proxied to `http://localhost:8100`.
 
 ### Docker
 

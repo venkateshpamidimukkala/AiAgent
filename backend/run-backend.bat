@@ -40,7 +40,7 @@ if errorlevel 1 (
 )
 
 echo Starting FastAPI backend with the project virtual environment...
-"%PYTHON_EXE%" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+"%PYTHON_EXE%" -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8100
 set "EXIT_CODE=%ERRORLEVEL%"
 popd
 exit /b %EXIT_CODE%
