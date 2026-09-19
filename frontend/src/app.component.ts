@@ -25,7 +25,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private jiraStatusTimer?: ReturnType<typeof setTimeout>;
   messages: Message[]=[]; selected?: Message; draft?: Draft;
   instruction='I received your message and will review it and follow up today.'; revision=''; listening=false; status='';
-  microsoftConnected=false; microsoftConfigured=false; microsoftEmail=''; microsoftUnread=0; microsoftMeetings=0; voiceEnabled=false; syncing=false;
+  microsoftConnected=false; microsoftConfigured=false; microsoftEmail=''; microsoftUnread=0; microsoftMeetings=0; voiceEnabled=false; priorityVoiceAlerts=true; syncing=false;
   confluenceConnected=false; confluenceConfigured=false; confluenceUrl=''; confluenceEmail=''; confluenceToken=''; confluenceLink=''; confluenceSourceLink=''; confluenceQuestion=''; confluenceFocus='everything'; confluencePage?:ConfluencePage; confluenceAnswer?:ConfluenceAnswer; confluenceLoading=false; confluenceOriginalResponse=''; confluenceTranslatedResponse=''; confluenceSelectedLanguage=localStorage.getItem('confluence-language')||'en-US'; confluenceTranslationLoading=false; private confluenceTranslationCache=new Map<string,string>(); confluenceSpeechState:'idle'|'loading'|'playing'|'paused'='idle'; private confluenceRequestId=0; private confluenceTranslationRequestId=0; private confluenceSpeechChunks:string[]=[]; private confluenceSpeechIndex=0; private confluenceSpeechSession=0;
   jiraConnected=false; jiraConfigured=false; jiraUrl=''; jiraEmail=''; jiraToken=''; jiraQuery='KAN-1'; jiraBoard=''; jiraIssues:JiraIssue[]=[]; jiraLoading=false; jiraSyncing=false; jiraLastSynced=''; jiraSelectedIssue?:JiraIssue; jiraStatusFilter='All'; jiraPriorityFilter='All'; jiraAssigneeFilter='All'; jiraSprintFilter='All'; jiraEpicFilter='All'; jiraTypeFilter='All'; jiraSort='updated'; jiraSortDescending=true; jiraPage=1; jiraPageSize=10; jiraSelectedKeys=new Set<string>();
   inboxSource='all'; draftText=''; jiraCommentIssue?:JiraIssue; jiraComment=''; jiraComments:JiraComment[]=[]; jiraReplyTo?:JiraComment; jiraCommentsLoading=false; jiraCommentSubmitting=false;
@@ -56,7 +56,8 @@ export class AppComponent implements OnInit, OnDestroy {
     this.loginEmail=localStorage.getItem('orbit-email')||'';
     this.loginName=localStorage.getItem('orbit-name')||'';
     this.selectedApps=JSON.parse(localStorage.getItem('orbit-apps')||'[]');
-    this.voiceEnabled=localStorage.getItem('voice-enabled')==='true';
+    this.voiceEnabled=localStorage.getItem('voice-enabled')!=='false';
+    this.priorityVoiceAlerts=localStorage.getItem('priority-voice-alerts')!=='false';
     this.voiceStyle=localStorage.getItem('voice-style')||'natural';
     this.preferredLanguage=localStorage.getItem('voice-language')||'en-US';
     this.inputLanguage=localStorage.getItem('voice-input-language')||this.preferredLanguage;
@@ -64,7 +65,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.voiceSpeed=Number(localStorage.getItem('voice-speed')||'1');
     this.sidebarCollapsed=localStorage.getItem('orbit-sidebar-collapsed')==='true';
     this.loadConnectionStatus();
-    this.load(false);
+    this.load(true);
     this.microsoftStatus();
     this.confluenceStatus();
     this.jiraStatus();
@@ -91,7 +92,8 @@ export class AppComponent implements OnInit, OnDestroy {
       const newItems=v.filter(item=>item.source==='outlook'||item.source==='teams').filter(item=>!this.knownMicrosoftIds.has(item.id));
       this.messages=v;
       v.filter(item=>item.source==='outlook'||item.source==='teams').forEach(item=>this.knownMicrosoftIds.add(item.id));
-      if(readNew && this.voiceEnabled && newItems.length) this.speakMessages(newItems);
+       const priorityItems=newItems.filter(item=>item.priority_score>=70);
+       if(readNew && this.voiceEnabled && this.priorityVoiceAlerts && priorityItems.length) this.speakMessages(priorityItems);
     },error:()=>this.status='Backend unavailable'});
   }
 
@@ -120,7 +122,31 @@ export class AppComponent implements OnInit, OnDestroy {
     this.status='Voice disabled. You can enable it again from Voice Settings.';
   }
 
+  togglePriorityVoiceAlerts(){
+    localStorage.setItem('priority-voice-alerts',String(this.priorityVoiceAlerts));
+    if(this.priorityVoiceAlerts){
+      this.status='Priority inbox voice alerts enabled.';
+      if(this.selected)this.announceReplyPrompt(this.selected);
+    }else{
+      this.status='Priority inbox voice alerts disabled.';
+      this.stopSpeaking();
+    }
+  }
+
   toggleNav(item:string){this.activeNav=this.activeNav===item?'dashboard':item;this.navOpen=false;}
+  openPriorityInbox(){
+    this.activeNav='inbox';
+    this.inboxSource='all';
+    this.navOpen=false;
+    const priority=this.messages.find(item=>(item.source==='outlook'||item.source==='teams')&&item.priority_score>=70);
+    if(!priority){this.status='No high-priority messages are available.';return;}
+    this.selected=priority;
+    this.draft=undefined;
+    this.instruction=`Reply as ${this.currentUserName}: I received your message and will review it and follow up today.`;
+    if(this.voiceEnabled&&this.priorityVoiceAlerts){
+      this.playSpeech(`${this.currentUserName}, you got a priority ${this.sourceName(priority.source)} from ${priority.sender}. Subject: ${priority.subject}. Would you like me to prepare a reply?`);
+    }
+  }
   toggleSidebar(){this.sidebarCollapsed=!this.sidebarCollapsed;localStorage.setItem('orbit-sidebar-collapsed',String(this.sidebarCollapsed));}
   toggleProfileMenu(){this.profileMenuOpen=!this.profileMenuOpen;}
   openAccountView(view:string){this.profileMenuOpen=false;this.accountView=view;this.profileName=this.loginName;this.profileEmail=this.loginEmail;}
@@ -166,13 +192,15 @@ export class AppComponent implements OnInit, OnDestroy {
   outputVoiceOptions(){return this.availableVoices.filter(voice=>voice.lang.toLowerCase().startsWith(this.preferredLanguage.split('-')[0].toLowerCase()));}
 
   speakMessages(items:Message[]){
-    const text=items.slice(0,5).map(item=>`${this.sourceName(item.source)} from ${item.sender}. Subject: ${item.subject}. ${item.body}`).join(' ');
+    const text=items.slice(0,5).map(item=>`You got a priority ${this.sourceName(item.source)} from ${item.sender}. Subject: ${item.subject}. Would you like me to prepare a reply?`).join(' ');
     this.speakAssistant(text);
   }
 
   connectMicrosoft(){location.href='/api/auth/microsoft/login';}
   disconnectMicrosoft(){this.http.post('/api/auth/microsoft/disconnect',{}).subscribe(()=>{this.microsoftConnected=false;this.microsoftEmail='';this.status='Microsoft disconnected';});}
-  select(item:Message){this.selected=item;this.draft=undefined;this.instruction=`Reply as ${this.currentUserName}: I received your message and will review it and follow up today.`;if(this.voiceEnabled)this.speakAssistant(`${this.currentUserName}, you got a ${this.sourceName(item.source)} from ${item.sender}. Would you like me to prepare a reply?`);}
+  announceReplyPrompt(item:Message){if(this.voiceEnabled&&this.priorityVoiceAlerts)this.playSpeech(`${this.currentUserName}, you got a priority ${this.sourceName(item.source)} from ${item.sender}. Would you like me to prepare a reply?`);}
+  select(item:Message){this.selected=item;this.draft=undefined;this.instruction=`Reply as ${this.currentUserName}: I received your message and will review it and follow up today.`;this.announceReplyPrompt(item);}
+  prepareReplyFromVoice(){if(!this.selected){this.status='Select a priority message first.';return;}this.generateCommunicationReply();this.status='Reply draft prepared. Review it before sending.';}
   createDraft(){if(!this.selected)return;this.http.post<Draft>('/api/replies/draft',{message_id:this.selected.id,instruction:this.instruction}).subscribe(v=>{this.draft=v;this.draftText=v.draft_text;});}
   revise(){if(!this.draft)return;this.http.post<Draft>(`/api/replies/${this.draft.id}/revise`,{instruction:this.revision||this.draftText}).subscribe(v=>{this.draft=v;this.draftText=v.draft_text;this.revision='';});}
   send(){if(!this.draft)return;this.http.post<{status:string}>(`/api/replies/${this.draft.id}/send`,{}).subscribe(v=>{this.status=v.status==='sent'?'Reply sent successfully':'Send failed';this.draft=undefined;this.draftText='';});}
@@ -353,5 +381,5 @@ export class AppComponent implements OnInit, OnDestroy {
   setPreferredLanguage(language:string){this.preferredLanguage=language;localStorage.setItem('voice-language',language);}
   setVoiceSpeed(speed:number){this.voiceSpeed=Number(speed);localStorage.setItem('voice-speed',String(this.voiceSpeed));}
   speakWithStyle(text:string){this.speakAssistant(text);}
-  listen(){const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;if(!Recognition){this.status='Speech recognition is not supported in this browser';return;}const r=new Recognition();r.lang=this.inputLanguage;this.listening=true;r.onresult=(e:any)=>{const text=e.results[0][0].transcript;const yes=/^(yes|yeah|yep|send it|add it|do it)\b/i.test(text.trim());if(yes&&this.draft)this.send();else if(yes&&this.jiraCommentIssue)this.addJiraComment();else if(this.confluencePage||this.confluenceLink){this.confluenceQuestion=text;this.askConfluence(text);}else this.instruction=text;this.listening=false;};r.onerror=()=>this.listening=false;r.onend=()=>this.listening=false;r.start();}
+  listen(){const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;if(!Recognition){this.status='Speech recognition is not supported in this browser';return;}const r=new Recognition();r.lang=this.inputLanguage;this.listening=true;r.onresult=(e:any)=>{const text=e.results[0][0].transcript;const normalized=text.trim();const yes=/^(yes|yeah|yep|prepare|draft|reply)\b/i.test(normalized);if(yes&&this.selected&&!this.draft){this.prepareReplyFromVoice();}else if(/^(send it|approve|do it)\b/i.test(normalized)&&this.draft){this.send();}else if(yes&&this.jiraCommentIssue)this.addJiraComment();else if(this.confluencePage||this.confluenceLink){this.confluenceQuestion=text;this.askConfluence(text);}else this.instruction=text;this.listening=false;};r.onerror=()=>this.listening=false;r.onend=()=>this.listening=false;r.start();}
 }

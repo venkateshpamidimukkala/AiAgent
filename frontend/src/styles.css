@@ -771,7 +771,7 @@ button:hover:not(:disabled) {
 @media (max-width: 700px) { .response-grid { grid-template-columns: 1fr; } .response-summary { grid-column: auto; } .confluence-controls { display: grid; grid-template-columns: 1fr; } .confluence-controls input, .confluence-controls button, .confluence-controls select { width: 100%; } }
 @media (max-width: 700px) { .confluence-voice-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .confluence-voice-controls button { width: 100%; min-width: 0; } }
 
-/* Microsoft 365 AI Communication Hub - inbox page only */
+/* Microsoft 365 Orbit Communication Hub - inbox page only */
 .communication-hub { --hub-ink:#21170f; --hub-muted:#857568; --hub-line:#eadfd5; --hub-orange:#f47721; --hub-purple:#6958e8; color:var(--hub-ink); min-width:0; }
 .hub-header { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:24px; }
 .hub-header h1 { margin:7px 0 5px; font-size:clamp(28px,3.3vw,42px); letter-spacing:-.055em; }
