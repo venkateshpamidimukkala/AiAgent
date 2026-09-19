@@ -18,7 +18,7 @@ from .microsoft_graph import outlook_summary, sync_microsoft_messages
 from .jira import add_comment, assigned_issues_missing_comment_today, assigned_issues_report, configure as configure_jira, disconnect as disconnect_jira, get_issue, issue_comments, restore as restore_jira, search_issues, status as jira_status
 from .priority import score
 from .providers import dispatch_provider
-from .schemas import AssistantQueryOut, AssistantQueryRequest, AssistantRequestOut, ConfluenceAskRequest, ConfluenceConnect, ConfluencePageRequest, DraftCreate, DraftOut, JiraCommentRequest, JiraConnect, JiraSearchRequest, MessageOut, ReviseRequest, VoiceTranslateRequest
+from .schemas import AssistantQueryOut, AssistantQueryRequest, AssistantRequestOut, ConfluenceAnalyzeRequest, ConfluenceAskRequest, ConfluenceConnect, ConfluencePageRequest, DraftCreate, DraftOut, JiraCommentRequest, JiraConnect, JiraSearchRequest, MessageOut, ReviseRequest, VoiceTranslateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -270,12 +270,26 @@ def ask_confluence(payload: ConfluenceAskRequest, db: Session = Depends(get_db))
     try:
         if payload.url.strip():
             page = fetch_page(payload.url, db)
-            return {**answer_confluence(payload.question, page, payload.focus), "source": {"title": page["title"], "url": page["url"]}}
+            return {**answer_confluence(payload.question, page, payload.focus), "page": page, "source": {"title": page["title"], "url": page["url"]}}
         pages = search_pages(payload.question, db)
         if not pages:
             return {"answer": "I could not find matching Confluence pages for that question.", "source": {"title": "Confluence search", "url": confluence_status(db)["base_url"]}}
-        context = {"title": "Confluence workspace search", "url": pages[0]["url"], "content": "\n\n".join(f"{page['title']}\n{page['content']}" for page in pages)}
-        return {**answer_confluence(payload.question, context, payload.focus), "source": {"title": pages[0]["title"], "url": pages[0]["url"]}}
+        page = pages[0]
+        return {**answer_confluence(payload.question, page, payload.focus), "page": page, "source": {"title": page["title"], "url": page["url"]}}
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/confluence/analyze")
+def analyze_confluence(payload: ConfluenceAnalyzeRequest):
+    """Analyze page content already loaded by the current Confluence session.
+
+    This endpoint deliberately does not access Confluence, search for pages, or
+    fetch a page. The frontend sends the cached page as the analysis context.
+    """
+    try:
+        result = answer_confluence(payload.question, payload.page, payload.focus)
+        return {**result, "source": {"title": payload.page.get("title", "Confluence page"), "url": payload.page.get("url", "")}}
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 

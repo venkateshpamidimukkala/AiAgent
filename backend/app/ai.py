@@ -1,6 +1,9 @@
 import json
 import re
 
+import httpx
+from fastapi import HTTPException
+
 from .config import settings
 
 
@@ -61,18 +64,33 @@ def answer_confluence(question: str, page: dict[str, str], focus: str = "everyth
 
 
 def translate_for_voice(text: str, language: str) -> str:
-    if language.lower().startswith("en"):
+    requested_language = language.strip().lower()
+    if requested_language.startswith("en"):
         return text
-    language_names = {"es": "Spanish", "fr": "French", "de": "German", "hi": "Hindi", "te": "Telugu", "pt": "Portuguese", "ja": "Japanese", "ko": "Korean", "ar": "Arabic", "zh": "Chinese"}
-    target = language_names.get(language.lower(), language)
+    target = requested_language.split("-", 1)[0]
+    if not settings.google_translate_api_key and not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="Translation is not configured. Add GOOGLE_TRANSLATE_API_KEY to backend/.env and restart the backend.")
+    if settings.google_translate_api_key:
+        response = httpx.post(
+            "https://translation.googleapis.com/language/translate/v2",
+            params={"key": settings.google_translate_api_key},
+            json={"q": text[:30000], "target": target, "format": "text"},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        translated = response.json().get("data", {}).get("translations", [{}])[0].get("translatedText")
+        if translated:
+            return translated
     if settings.openai_api_key:
         from openai import OpenAI
         result = OpenAI(api_key=settings.openai_api_key).chat.completions.create(
             model=settings.openai_model,
             messages=[{"role": "system", "content": f"Translate the following work notification into {target}. Preserve names, product names, URLs, and meaning. Return only the translation."}, {"role": "user", "content": text[:30000]}],
         )
-        return result.choices[0].message.content or text
-    return text
+        translated = result.choices[0].message.content
+        if translated:
+            return translated
+    raise HTTPException(status_code=502, detail=f"The translation provider returned no translation for language '{target}'.")
 
 
 def answer_workspace(query: str, messages: list[dict[str, str]]) -> str:

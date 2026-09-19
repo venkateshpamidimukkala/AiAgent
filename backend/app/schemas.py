@@ -53,6 +53,12 @@ class ConfluenceAskRequest(ConfluencePageRequest):
     focus: str = Field(default="everything", max_length=32)
 
 
+class ConfluenceAnalyzeRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    focus: str = Field(default="everything", max_length=32)
+    page: dict[str, str | None]
+
+
 class VoiceTranslateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=30000)
     language: str = Field(min_length=2, max_length=20)

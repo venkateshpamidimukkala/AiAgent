@@ -7,8 +7,8 @@ interface Message { id:number; source:string; sender:string; subject:string; bod
 interface Draft { id:number; message_id:number; draft_text:string; status:string; }
 interface MicrosoftStatus { configured:boolean; connected:boolean; account_email:string|null; unread_emails:number; upcoming_meetings:number; }
 interface ConfluenceStatus { configured:boolean; connected:boolean; base_url:string; email:string; account_email?:string|null; }
-interface ConfluencePage { title:string; space:string; updated:string|null; url:string; content:string; }
-interface ConfluenceAnswer { answer:string; summary:string; key_points:string[]; problems:string[]; implementation:string[]; source:{title:string;url:string}; }
+interface ConfluencePage { id:string; title:string; space:string; updated:string|null; url:string; content:string; }
+interface ConfluenceAnswer { answer:string; summary:string; key_points:string[]; problems:string[]; implementation:string[]; page?:ConfluencePage; source:{title:string;url:string}; }
 interface JiraStatus { configured:boolean; connected:boolean; base_url:string; email:string; account_email?:string|null; }
 interface ConnectionStatus { database:{connected:boolean; type:string; name:string; schemas:string[]; tables:string[]; error:string|null}; providers:{microsoft:MicrosoftStatus; jira:JiraStatus; confluence:ConfluenceStatus}; }
 interface ProviderStatusCard { key:'microsoft'|'jira'|'confluence'; label:string; status:MicrosoftStatus|JiraStatus|ConfluenceStatus; }
@@ -26,7 +26,7 @@ export class AppComponent implements OnInit, OnDestroy {
   messages: Message[]=[]; selected?: Message; draft?: Draft;
   instruction='I received your message and will review it and follow up today.'; revision=''; listening=false; status='';
   microsoftConnected=false; microsoftConfigured=false; microsoftEmail=''; microsoftUnread=0; microsoftMeetings=0; voiceEnabled=false; syncing=false;
-  confluenceConnected=false; confluenceConfigured=false; confluenceUrl=''; confluenceEmail=''; confluenceToken=''; confluenceLink=''; confluenceSourceLink=''; confluenceQuestion=''; confluenceFocus='everything'; confluencePage?:ConfluencePage; confluenceAnswer?:ConfluenceAnswer; confluenceLoading=false;
+  confluenceConnected=false; confluenceConfigured=false; confluenceUrl=''; confluenceEmail=''; confluenceToken=''; confluenceLink=''; confluenceSourceLink=''; confluenceQuestion=''; confluenceFocus='everything'; confluencePage?:ConfluencePage; confluenceAnswer?:ConfluenceAnswer; confluenceLoading=false; confluenceOriginalResponse=''; confluenceTranslatedResponse=''; confluenceSelectedLanguage=localStorage.getItem('confluence-language')||'en-US'; confluenceTranslationLoading=false; private confluenceTranslationCache=new Map<string,string>(); confluenceSpeechState:'idle'|'loading'|'playing'|'paused'='idle'; private confluenceRequestId=0; private confluenceTranslationRequestId=0; private confluenceSpeechChunks:string[]=[]; private confluenceSpeechIndex=0; private confluenceSpeechSession=0;
   jiraConnected=false; jiraConfigured=false; jiraUrl=''; jiraEmail=''; jiraToken=''; jiraQuery='KAN-1'; jiraBoard=''; jiraIssues:JiraIssue[]=[]; jiraLoading=false; jiraSyncing=false; jiraLastSynced=''; jiraSelectedIssue?:JiraIssue; jiraStatusFilter='All'; jiraPriorityFilter='All'; jiraAssigneeFilter='All'; jiraSprintFilter='All'; jiraEpicFilter='All'; jiraTypeFilter='All'; jiraSort='updated'; jiraSortDescending=true; jiraPage=1; jiraPageSize=10; jiraSelectedKeys=new Set<string>();
   inboxSource='all'; draftText=''; jiraCommentIssue?:JiraIssue; jiraComment=''; jiraComments:JiraComment[]=[]; jiraReplyTo?:JiraComment; jiraCommentsLoading=false; jiraCommentSubmitting=false;
   jiraDailyIssues:JiraDailyIssue[]=[]; jiraDailyLoading=false;
@@ -220,6 +220,48 @@ export class AppComponent implements OnInit, OnDestroy {
     window.setTimeout(()=>synth.speak(utterance),0);
   }
   stopSpeaking(){if('speechSynthesis' in window){window.speechSynthesis.cancel();this.speaking=false;}}
+  private splitSpeechText(text:string){
+    const normalized=text.replace(/\s+/g,' ').trim();
+    if(!normalized)return [];
+    const sentences=normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[normalized];
+    const chunks:string[]=[]; let current='';
+    sentences.forEach(sentence=>{const part=sentence.trim();if(!part)return;if((current+' '+part).trim().length>220&&current){chunks.push(current.trim());current=part;}else current=(current+' '+part).trim();});
+    if(current)chunks.push(current); return chunks;
+  }
+  private confluenceResponseText(){
+    const answer=this.confluenceAnswer; if(!answer)return '';
+    return [answer.summary||answer.answer,...answer.key_points,...answer.problems,...answer.implementation].filter((part):part is string=>!!part&&part.trim().length>0).join('. ');
+  }
+  private confluenceLanguageCode(language:string){return language.split('-')[0].toLowerCase();}
+  private confluenceSpeechText(){return this.confluenceSelectedLanguage==='en-US'?this.confluenceOriginalResponse:this.confluenceTranslatedResponse;}
+  setConfluenceLanguage(language:string){
+    this.confluenceSelectedLanguage=language; localStorage.setItem('confluence-language',language); this.stopConfluenceResponse();
+    if(!this.confluenceOriginalResponse)return;
+    if(language==='en-US'){this.confluenceTranslatedResponse='';return;}
+    const cacheKey=`${language}:${this.confluenceOriginalResponse}`; const cached=this.confluenceTranslationCache.get(cacheKey);
+    if(cached){this.confluenceTranslatedResponse=cached;return;}
+    const requestId=++this.confluenceTranslationRequestId; this.confluenceTranslationLoading=true; this.confluenceTranslatedResponse='';
+    this.http.post<{text:string}>('/api/voice/translate',{text:this.confluenceOriginalResponse,language:this.confluenceLanguageCode(language)}).subscribe({next:v=>{if(requestId!==this.confluenceTranslationRequestId)return;const text=v.text?.trim();if(!text){this.confluenceTranslationLoading=false;this.status='The translation provider returned an empty response';return;}this.confluenceTranslationCache.set(cacheKey,text);this.confluenceTranslatedResponse=text;this.confluenceTranslationLoading=false;},error:e=>{if(requestId!==this.confluenceTranslationRequestId)return;this.confluenceTranslationLoading=false;this.confluenceTranslatedResponse='';this.status=e.error?.detail||'Unable to translate the Confluence response';}});
+  }
+  private speakNextConfluenceChunk(session:number){
+    if(session!==this.confluenceSpeechSession)return;
+    const synth=window.speechSynthesis; const text=this.confluenceSpeechChunks[this.confluenceSpeechIndex];
+    if(!text){this.confluenceSpeechState='idle';this.speaking=false;return;}
+    const utterance=new SpeechSynthesisUtterance(text); utterance.lang=this.confluenceSelectedLanguage; utterance.rate=this.voiceSpeed;
+    const voices=this.availableVoices.length?this.availableVoices:synth.getVoices(); const languageCode=this.confluenceSelectedLanguage.split('-')[0].toLowerCase(); const selected=voices.find(voice=>voice.lang.toLowerCase()===this.confluenceSelectedLanguage.toLowerCase())||voices.find(voice=>voice.lang.toLowerCase().startsWith(languageCode)); if(selected)utterance.voice=selected;
+    utterance.onend=()=>{if(session!==this.confluenceSpeechSession)return;this.confluenceSpeechIndex++;this.speakNextConfluenceChunk(session);};
+    utterance.onerror=()=>{if(session===this.confluenceSpeechSession){this.confluenceSpeechState='idle';this.speaking=false;this.status='Unable to play the Confluence response';}};
+    this.confluenceSpeechState='playing';this.speaking=true;synth.speak(utterance);
+  }
+  playConfluenceResponse(){
+    if(!('speechSynthesis' in window)){this.status='Text-to-speech is not supported in this browser';return;}
+    const text=this.confluenceSpeechText(); if(!text){this.status=this.confluenceTranslationLoading?'Translation is still preparing':'There is no Confluence response to read aloud';return;}
+    this.stopConfluenceResponse(); this.confluenceSpeechState='loading'; this.confluenceSpeechChunks=this.splitSpeechText(text); this.confluenceSpeechIndex=0; const session=++this.confluenceSpeechSession;
+    window.setTimeout(()=>this.speakNextConfluenceChunk(session),0);
+  }
+  pauseConfluenceResponse(){if(this.confluenceSpeechState==='playing'&&'speechSynthesis' in window){window.speechSynthesis.pause();this.confluenceSpeechState='paused';}}
+  resumeConfluenceResponse(){if(this.confluenceSpeechState==='paused'&&'speechSynthesis' in window){window.speechSynthesis.resume();this.confluenceSpeechState='playing';}}
+  stopConfluenceResponse(){if('speechSynthesis' in window)window.speechSynthesis.cancel();this.confluenceSpeechSession++;this.confluenceSpeechChunks=[];this.confluenceSpeechIndex=0;this.confluenceSpeechState='idle';this.speaking=false;}
   confluenceStatus(){this.http.get<ConfluenceStatus>('/api/confluence/status').subscribe({next:v=>{this.confluenceConfigured=v.configured;this.confluenceConnected=v.connected;this.confluenceUrl=v.base_url;this.confluenceEmail=v.email;this.providerStatusCards[3]={key:'confluence',label:'Confluence',status:v};},error:()=>this.status='Unable to read Confluence connection status'});}
   jiraStatus(){this.http.get<JiraStatus>('/api/jira/status').subscribe({next:v=>{this.jiraConfigured=v.configured;this.jiraConnected=v.connected;this.jiraUrl=v.base_url;this.jiraEmail=v.email;this.providerStatusCards[2]={key:'jira',label:'Jira',status:v};this.loadJiraDailyComments();},error:()=>this.status='Unable to read Jira connection status'});}
   loadConnectionStatus(){this.connectionsLoading=true;this.http.get<ConnectionStatus>('/api/connections/status').subscribe({next:v=>{this.connectionStatus=v;this.setProviderStatusCards(v.providers);this.connectionsLoading=false;},error:()=>{this.connectionsLoading=false;this.status='Unable to read combined connection status. Showing individual provider statuses.';this.jiraStatus();this.confluenceStatus();}});}
@@ -264,9 +306,21 @@ export class AppComponent implements OnInit, OnDestroy {
   }
   disconnectConfluence(){this.http.post('/api/confluence/disconnect',{}).subscribe(()=>{this.confluenceConnected=false;this.confluenceConfigured=false;this.status='Confluence disconnected';});}
   private isConfluencePageReference(value:string){return /\/pages\/\d+|pageId=\d+|^\d+$/.test(value.trim());}
+  private clearConfluenceContext(){
+    this.confluencePage=undefined;
+    this.confluenceAnswer=undefined;
+    this.confluenceOriginalResponse='';
+    this.confluenceTranslatedResponse='';
+    this.confluenceTranslationCache.clear();
+    this.confluenceQuestion='';
+    this.confluenceSourceLink='';
+    this.confluenceRequestId++;
+  }
   loadConfluence(){
     const input=this.confluenceLink.trim();
     if(!input)return;
+    const requestedPageLink=this.confluenceSourceLink.trim();
+    this.clearConfluenceContext();
     if(this.isConfluencePageReference(input)){
       this.confluenceSourceLink=input;
       this.confluenceLink='Give me a summary';
@@ -275,14 +329,26 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     }
     this.confluenceQuestion=input;
+    if(requestedPageLink)this.confluenceSourceLink=requestedPageLink;
     this.askConfluence(input);
   }
   askConfluence(question=this.confluenceQuestion){
     if(!question.trim()){this.status='Enter a question for Confluence.';return;}
-    this.confluenceQuestion=question;this.confluenceLoading=true;this.confluenceAnswer=undefined;
-    const pageUrl=this.confluenceSourceLink.trim()||this.confluencePage?.url||'';
-    this.http.post<ConfluenceAnswer>('/api/confluence/ask',{url:pageUrl,question,focus:this.confluenceFocus}).subscribe({next:v=>{this.confluenceAnswer=v;this.confluenceLoading=false;this.status='Answer generated from Confluence';if(this.voiceEnabled)this.speakAssistant(v.answer);},error:e=>{this.confluenceLoading=false;this.status=e.error?.detail||'Unable to answer from Confluence';}});
+    const quickAction=this.isConfluenceQuickAction(question);
+    if(quickAction&&!this.confluencePage){this.status='Ask Confluence first to load a page before using quick actions.';return;}
+    const pageUrl=this.confluenceSourceLink.trim();
+    if(!quickAction){
+      this.clearConfluenceContext();
+      this.confluenceSourceLink=pageUrl;
+    }
+    this.stopConfluenceResponse(); this.confluenceQuestion=question;this.confluenceLoading=true;this.confluenceAnswer=undefined;
+    const requestId=++this.confluenceRequestId;
+    const request=quickAction
+      ? this.http.post<ConfluenceAnswer>('/api/confluence/analyze',{page:this.confluencePage,question,focus:this.confluenceFocus})
+      : this.http.post<ConfluenceAnswer>('/api/confluence/ask',{url:pageUrl,question,focus:this.confluenceFocus});
+    request.subscribe({next:v=>{if(requestId!==this.confluenceRequestId)return;if(v.page)this.confluencePage=v.page;this.confluenceAnswer=v;this.confluenceOriginalResponse=this.confluenceResponseText();this.confluenceTranslatedResponse='';this.confluenceTranslationCache.clear();this.confluenceLoading=false;this.status='Answer generated from Confluence';if(this.confluenceSelectedLanguage!=='en-US')this.setConfluenceLanguage(this.confluenceSelectedLanguage);},error:e=>{if(requestId!==this.confluenceRequestId)return;this.confluenceLoading=false;this.status=e.error?.detail||'Unable to answer from Confluence';}});
   }
+  private isConfluenceQuickAction(question:string){return /^(give me (a )?simple summary|what are the key points\?|what problems should i watch for\?|how (would|do) i implement this\?)$/i.test(question.trim());}
   setVoiceStyle(style:string){this.voiceStyle=style;localStorage.setItem('voice-style',style);}
   setPreferredLanguage(language:string){this.preferredLanguage=language;localStorage.setItem('voice-language',language);}
   setVoiceSpeed(speed:number){this.voiceSpeed=Number(speed);localStorage.setItem('voice-speed',String(this.voiceSpeed));}

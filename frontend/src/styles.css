@@ -759,7 +759,17 @@ button:hover:not(:disabled) {
 .response-section ul { margin: 0; padding-left: 18px; }
 .response-section li + li { margin-top: 7px; }
 .response-summary { grid-column: 1 / -1; background: #fff8ef; border-color: #f2d4bc; }
+.confluence-translation-note { margin: 0 0 12px; padding: 9px 12px; border-radius: 9px; color: var(--orange-dark); background: var(--orange-soft); font-size: 12px; font-weight: 700; }
+.confluence-voice-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; padding: 12px; border: 1px solid #e6ddd6; border-radius: 12px; background: #faf9f7; }
+.confluence-voice-controls > span { flex: 1 1 100%; color: var(--muted); font-size: 12px; }
+.confluence-voice-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 40px; min-width: 96px; padding: 0 15px; border: 1px solid #d8cec6 !important; border-radius: 8px; color: #5b4b40 !important; background: #fff !important; box-shadow: 0 1px 2px rgba(43,24,13,.06); font-size: 12px; font-weight: 700; line-height: 1; }
+.confluence-voice-controls button:first-of-type { border-color: var(--orange) !important; color: #fff !important; background: var(--orange) !important; box-shadow: 0 4px 10px rgba(244,123,32,.22); }
+.confluence-voice-controls button:hover:not(:disabled) { border-color: var(--orange) !important; color: var(--orange-dark) !important; background: #fff8f2 !important; }
+.confluence-voice-controls button:first-of-type:hover:not(:disabled) { color: #fff !important; background: var(--orange-dark) !important; }
+.confluence-voice-controls button:active:not(:disabled) { transform: translateY(1px); }
+.confluence-voice-controls button:disabled { cursor: not-allowed; opacity: .45; box-shadow: none; }
 @media (max-width: 700px) { .response-grid { grid-template-columns: 1fr; } .response-summary { grid-column: auto; } .confluence-controls { display: grid; grid-template-columns: 1fr; } .confluence-controls input, .confluence-controls button, .confluence-controls select { width: 100%; } }
+@media (max-width: 700px) { .confluence-voice-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; } .confluence-voice-controls button { width: 100%; min-width: 0; } }
 
 /* Microsoft 365 AI Communication Hub - inbox page only */
 .communication-hub { --hub-ink:#21170f; --hub-muted:#857568; --hub-line:#eadfd5; --hub-orange:#f47721; --hub-purple:#6958e8; color:var(--hub-ink); min-width:0; }

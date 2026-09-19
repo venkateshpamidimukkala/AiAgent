@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-4o-mini"
     openai_stt_model: str = "whisper-1"
+    google_translate_api_key: str | None = None
     microsoft_client_id: str | None = None
     microsoft_client_secret: str | None = None
     microsoft_tenant_id: str = "common"
